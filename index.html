@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>我的週計畫 Planner - 月視圖全顯版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root { -webkit-tap-highlight-color: transparent; }
+        * { border-radius: 0 !important; box-sizing: border-box; }
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f1f5f9;
+            color: #0f172a;
+            overflow-x: hidden;
+            padding-top: env(safe-area-inset-top);
+        }
+        .no-select { user-select: none; -webkit-user-select: none; }
+        
+        /* 網格系統 */
+        .weekly-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1px;
+            background-color: #cbd5e1;
+            border: 1px solid #cbd5e1;
+            width: 100%;
+        }
+        .monthly-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 1px;
+            background-color: #cbd5e1;
+            border: 1px solid #cbd5e1;
+            width: 100%;
+        }
+
+        .day-card {
+            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+            background: white;
+            padding: 0;
+            overflow: hidden;
+        }
+        .day-card.full-width { grid-column: span 2; }
+        
+        /* 月視圖格子：隨內容伸展 */
+        .month-cell {
+            min-height: 80px; /* 最小高度 */
+            background: white;
+            display: flex;
+            flex-direction: column;
+            cursor: pointer;
+        }
+        .month-cell.other-month { background-color: #f8fafc; opacity: 0.4; }
+        .month-date-label {
+            font-size: 10px;
+            font-weight: 900;
+            padding: 2px 4px;
+            text-align: right;
+            border-bottom: 1px solid rgba(0,0,0,0.03);
+        }
+        
+        /* 月視圖內的三分格 */
+        .month-cat-section {
+            flex: 1;
+            padding: 1px;
+            font-size: 8px;
+            line-height: 1.1;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+        .month-task-line {
+            display: block;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding: 0 2px;
+        }
+
+        /* 顏色主題 */
+        .cat-家庭 { background-color: #fff1f2; color: #be123c; }
+        .cat-職場 { background-color: #eff6ff; color: #1d4ed8; }
+        .cat-個人 { background-color: #fefce8; color: #a16207; }
+
+        .day-header { padding: 12px 8px; border-bottom: 1px solid #e2e8f0; background: #fff; }
+        .category-block { flex: 1; display: flex; flex-direction: column; border-bottom: 1px solid rgba(0,0,0,0.05); }
+        .category-label { padding: 4px 8px; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; }
+        
+        .date-highlight { background-color: #4f46e5; color: white !important; padding: 2px 6px; }
+        
+        .task-item { display: flex; align-items: flex-start; gap: 6px; padding: 10px 8px; font-size: 0.9rem; background: transparent; border-bottom: 1px solid rgba(0,0,0,0.03); cursor: pointer; }
+        .task-item:active { background-color: rgba(0,0,0,0.08); }
+        .task-text { word-break: break-all; overflow-wrap: break-word; white-space: pre-wrap; line-height: 1.4; flex: 1; min-width: 0; }
+        .task-text.completed { color: #94a3b8; font-weight: 400; }
+        
+        .modal-overlay { position: fixed; inset: 0; z-index: 2000; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; padding: 15px; }
+        .modal-overlay.show { display: flex; }
+
+        .shift-badge { font-size: 12px; padding: 4px 6px; border: 1px solid #e2e8f0; cursor: pointer; font-weight: 700; text-align: center; }
+        .shift-早班 { background-color: #fef08a; color: #854d0e; }
+        .shift-長早 { background-color: #fed7aa; color: #9a3412; }
+        .shift-中班 { background-color: #fecaca; color: #991b1b; }
+        .shift-放假 { background-color: #bbf7d0; color: #166534; }
+        .shift-大夜 { background-color: #e0e7ff; color: #3730a3; }
+        .shift-小夜 { background-color: #bfdbfe; color: #1e40af; }
+        .shift-未定 { background-color: #f8fafc; color: #94a3b8; }
+
+        #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1e293b; color: white; padding: 10px 20px; font-size: 12px; z-index: 3000; display: none; box-shadow: 4px 4px 0px rgba(0,0,0,0.1); text-align: center; width: 80%; max-width: 300px; }
+        .checkbox-inner { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+        
+        .export-mode nav, .export-mode #cloud-status, .export-mode .mt-8, .export-mode footer, .export-mode .quick-input-area { display: none !important; }
+    </style>
+</head>
+<body class="pb-10">
+
+    <nav class="sticky top-0 z-40 bg-white border-b border-slate-300 px-4 h-14 flex items-center justify-between shadow-sm no-select">
+        <div class="flex items-center gap-2">
+            <div class="w-6 h-6 bg-slate-800 text-white flex items-center justify-center font-bold text-xs">P</div>
+            <span class="font-bold text-xs tracking-tighter uppercase">Planner</span>
+        </div>
+        <div class="flex items-center gap-1">
+            <button onclick="changePeriod(-1)" class="p-2 text-slate-400">◄</button>
+            <span id="period-display" class="text-[11px] font-bold w-28 text-center cursor-pointer" onclick="openCalendar()">載入中...</span>
+            <button onclick="changePeriod(1)" class="p-2 text-slate-400">►</button>
+        </div>
+        <div class="flex gap-1">
+            <button id="view-toggle" onclick="toggleView()" class="bg-slate-100 text-slate-600 text-[10px] px-2 py-1 font-bold border border-slate-200">月視圖</button>
+            <button onclick="goToday()" class="bg-slate-800 text-white text-[10px] px-2 py-1 font-bold">今日</button>
+        </div>
+    </nav>
+
+    <main class="p-2 max-w-5xl mx-auto" id="main-container">
+        <!-- 雲端狀態 -->
+        <div id="cloud-status" class="mb-2 px-2 flex justify-between text-[9px] text-slate-400 font-bold uppercase tracking-widest no-select">
+            <span id="sync-text">雲端同步：未連接</span>
+            <span id="user-id-text"></span>
+        </div>
+
+        <!-- 網格容器 -->
+        <div id="grid-container" class="weekly-grid"></div>
+
+        <div class="mt-8 px-2 space-y-2 no-select">
+            <div class="grid grid-cols-2 gap-1">
+                <button onclick="exportToExcel()" class="py-4 bg-white border border-slate-300 text-[11px] font-bold uppercase tracking-wider text-indigo-600 active:bg-slate-50">儲存 EXCEL</button>
+                <button onclick="triggerFileImport('xlsx')" class="py-4 bg-white border border-slate-300 text-[11px] font-bold uppercase tracking-wider text-indigo-600 active:bg-slate-50">插入 EXCEL</button>
+            </div>
+            <div class="grid grid-cols-2 gap-1">
+                <button onclick="exportToCSV()" class="py-4 bg-white border border-slate-300 text-[11px] font-bold uppercase tracking-wider text-slate-600 active:bg-slate-50">導出 CSV</button>
+                <button onclick="openCSVImportModal()" class="py-4 bg-white border border-slate-300 text-[11px] font-bold uppercase tracking-wider text-slate-600 active:bg-slate-50">插入 CSV / 編輯</button>
+            </div>
+            <button onclick="exportToPNG()" class="w-full py-4 bg-indigo-600 text-white border border-indigo-700 text-[11px] font-bold uppercase tracking-widest active:bg-indigo-700 shadow-sm flex items-center justify-center gap-2">
+                輸出長圖片 (PNG)
+            </button>
+            <button onclick="clearWeek()" class="w-full py-3 bg-white border border-slate-200 text-[10px] font-bold text-red-300 uppercase tracking-widest">清空當前週期事項與班表</button>
+        </div>
+    </main>
+
+    <div id="toast">訊息提示</div>
+
+    <!-- 彈窗：CSV 插入與代碼編輯 -->
+    <div id="modal-csv-import" class="modal-overlay" onclick="if(event.target==this) closeModals()">
+        <div class="bg-white w-full max-w-sm border border-slate-400 shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="p-4 bg-slate-800 text-white flex justify-between items-center">
+                <span class="text-xs font-bold uppercase tracking-widest">CSV 數據管理 / 編輯</span>
+                <button onclick="closeModals()" class="text-white opacity-50">✕</button>
+            </div>
+            <div class="p-4 overflow-y-auto space-y-4">
+                <div>
+                    <span class="text-[10px] font-bold text-slate-400 uppercase block mb-2">步驟一：選取檔案 (或直接貼上下方框格)</span>
+                    <button onclick="triggerFileImport('csv')" class="w-full py-3 bg-indigo-50 border border-indigo-200 text-indigo-600 text-xs font-bold">從手機選取 .csv 檔案</button>
+                </div>
+                <div>
+                    <span class="text-[10px] font-bold text-slate-400 uppercase block mb-2">步驟二：編輯或貼上代碼</span>
+                    <textarea id="csv-paste-area" class="w-full h-48 bg-slate-50 p-2 text-[10px] font-mono focus:outline-none border border-slate-200" placeholder="在此貼上或修改 CSV 內容..."></textarea>
+                    <button onclick="importCSVFromText()" class="w-full mt-2 py-4 bg-indigo-600 text-white text-xs font-bold active:bg-indigo-700 shadow-md">解析並導入數據</button>
+                </div>
+            </div>
+            <div class="p-2 bg-slate-100 border-t">
+                <button onclick="closeModals()" class="w-full py-3 text-slate-500 text-xs font-bold uppercase">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈窗：任務編輯 -->
+    <div id="modal-task-action" class="modal-overlay" onclick="if(event.target==this) closeModals()">
+        <div class="bg-white w-full max-w-xs border border-slate-400 shadow-2xl overflow-hidden">
+            <div class="p-4 bg-slate-50 border-b">
+                <input type="text" id="action-task-input" class="w-full bg-white border border-slate-300 px-3 py-3 text-sm focus:outline-none focus:border-indigo-500 font-bold">
+            </div>
+            <div class="px-4 py-2 bg-white">
+                <span class="text-[9px] font-bold text-slate-400 uppercase block mb-1">更改分類</span>
+                <div class="grid grid-cols-3 gap-1">
+                    <button onclick="changeTaskCategory('家庭')" class="py-2 border text-[10px] font-bold" id="cat-btn-家庭">家庭</button>
+                    <button onclick="changeTaskCategory('職場')" class="py-2 border text-[10px] font-bold" id="cat-btn-職場">職場</button>
+                    <button onclick="changeTaskCategory('個人')" class="py-2 border text-[10px] font-bold" id="cat-btn-個人">個人</button>
+                </div>
+            </div>
+            <div class="action-grid no-select border-t">
+                <button onclick="executeAction('up')" class="bg-white p-4 text-[9px] font-bold uppercase">上移</button>
+                <button onclick="executeAction('down')" class="bg-white p-4 text-[9px] font-bold uppercase">下移</button>
+                <button onclick="executeAction('duplicate')" class="bg-white p-4 text-[9px] font-bold uppercase">複製</button>
+                <button onclick="executeAction('delete')" class="bg-white p-4 text-[9px] font-bold uppercase text-red-500">刪除</button>
+            </div>
+            <div class="p-2 flex gap-1 bg-slate-100">
+                <button onclick="closeModals()" class="flex-1 py-3 bg-white text-xs font-bold uppercase">取消</button>
+                <button onclick="executeAction('save')" class="flex-1 py-3 bg-slate-800 text-white text-xs font-bold uppercase">儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈窗：日期詳情 -->
+    <div id="modal-day" class="modal-overlay" onclick="if(event.target==this) closeModals()">
+        <div class="bg-white w-full max-w-md border border-slate-400 shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="p-3 border-b flex justify-between items-center bg-white">
+                <button onclick="changeDetailDay(-1)" class="p-2 text-slate-400">◄</button>
+                <div class="text-center"><div id="detail-date" class="font-bold text-sm"></div><div id="detail-weekday" class="text-indigo-600 text-[10px] font-bold"></div></div>
+                <button onclick="changeDetailDay(1)" class="p-2 text-slate-400">►</button>
+            </div>
+            <div id="detail-tri-container" class="flex-1 overflow-y-auto bg-slate-50 flex flex-col"></div>
+            <button onclick="closeModals()" class="w-full py-4 bg-slate-800 text-white text-xs font-bold uppercase tracking-widest">關閉詳情</button>
+        </div>
+    </div>
+
+    <!-- 其它輔助彈窗 (班別、月曆) -->
+    <div id="modal-shift-picker" class="modal-overlay" onclick="if(event.target==this) closeModals()">
+        <div class="bg-white w-full max-w-xs border border-slate-400 shadow-2xl overflow-hidden">
+            <div class="p-4 bg-slate-50 border-b font-bold text-[10px] uppercase">選擇班別</div>
+            <div id="shift-options" class="grid grid-cols-2 gap-1 p-1 bg-slate-100"></div>
+            <button onclick="closeModals()" class="w-full py-4 font-bold text-xs border-t">取消</button>
+        </div>
+    </div>
+
+    <div id="modal-calendar" class="modal-overlay" onclick="if(event.target==this) closeModals()">
+        <div class="bg-white w-full max-w-xs p-4 shadow-2xl">
+            <div id="cal-header" class="flex justify-between items-center mb-4 font-bold text-xs"></div>
+            <div id="cal-days" class="grid grid-cols-7 gap-px bg-slate-200 border text-[10px]"></div>
+            <button onclick="closeModals()" class="mt-4 w-full py-3 bg-slate-800 text-white text-xs font-bold">Close</button>
+        </div>
+    </div>
+
+    <input type="file" id="file-upload" style="display:none">
+
+    <!-- Firebase 模組化 CDN -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, doc, setDoc, getDoc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+        // ★★★ 第一步：在此貼上您的 Firebase Config ★★★
+          const firebaseConfig = {
+    apiKey: "AIzaSyDwuof_TdhNUqtQ2gE1Uqul72E71Gl9fsU",
+    authDomain: "weekdays-8cd44.firebaseapp.com",
+    projectId: "weekdays-8cd44",
+    storageBucket: "weekdays-8cd44.firebasestorage.app",
+    messagingSenderId: "80052350474",
+    appId: "1:80052350474:web:2c6de2bad3ed6b1ccbf9f3",
+    measurementId: "G-S82RGCVG6X"
+  };
+        // ★★★ 貼上結束 ★★★
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = 'my-tri-planner-v3';
+
+        let user = null;
+
+        onAuthStateChanged(auth, async (u) => {
+            user = u;
+            if (user) {
+                document.getElementById('sync-text').innerText = '雲端同步：已連接';
+                document.getElementById('user-id-text').innerText = `ID: ${user.uid.slice(0,6)}`;
+                try {
+                    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'taskData', 'latest');
+                    const snap = await getDoc(docRef);
+                    if (snap.exists()) {
+                        const data = JSON.parse(snap.data().payload);
+                        window.tasks = data.tasks || [];
+                        window.shifts = data.shifts || {};
+                        window.save(false);
+                    }
+                } catch(e) {}
+            } else {
+                signInAnonymously(auth);
+            }
+        });
+
+        window.syncToCloud = async () => {
+            if (!user) return;
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'taskData', 'latest');
+                await setDoc(docRef, { payload: JSON.stringify({ tasks: window.tasks, shifts: window.shifts }), ts: Date.now() });
+                document.getElementById('sync-text').innerText = '雲端同步：已同步';
+            } catch (err) { console.error(err); }
+        };
+    </script>
+
+    <script>
+        // 資料狀態
+        window.tasks = JSON.parse(localStorage.getItem('local_db_v16')) || [];
+        window.shifts = JSON.parse(localStorage.getItem('local_shifts_v16')) || {};
+        
+        let viewMode = 'week'; 
+        let viewDate = new Date();
+        let detailDate = new Date();
+        let currentEditingTaskId = null;
+
+        const categories = ['家庭', '職場', '個人'];
+        const dayKeys = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const dayLabels = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+        const gridOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const shiftTypes = ['早班', '長早', '中班', '大夜', '小夜', '放假', '未定'];
+        const checkIcon = `<div class="checkbox-inner"><svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg></div>`;
+
+        window.onload = () => {
+            render();
+            document.getElementById('file-upload').addEventListener('change', handleFileImport);
+        };
+
+        function save(triggerCloud = true) {
+            localStorage.setItem('local_db_v16', JSON.stringify(window.tasks));
+            localStorage.setItem('local_shifts_v16', JSON.stringify(window.shifts));
+            render(); 
+            if(document.getElementById('modal-day').style.display === 'flex') renderDayDetail();
+            if (triggerCloud && typeof window.syncToCloud === 'function') window.syncToCloud();
+        }
+        window.save = save;
+
+        function toggleView() {
+            viewMode = (viewMode === 'week') ? 'month' : 'week';
+            document.getElementById('view-toggle').innerText = (viewMode === 'week') ? '月視圖' : '週視圖';
+            const container = document.getElementById('grid-container');
+            container.className = (viewMode === 'week') ? 'weekly-grid' : 'monthly-grid';
+            render();
+        }
+
+        function render() {
+            if (viewMode === 'week') renderWeek();
+            else renderMonth();
+        }
+
+        function renderWeek() {
+            const monday = getMonday(viewDate);
+            const weekKey = getWeekKey(viewDate);
+            const todayStr = new Date().toDateString();
+            document.getElementById('period-display').innerText = `${monday.getMonth()+1}/${monday.getDate()} - ${new Date(monday.getTime() + 6*24*60*60*1000).getMonth()+1}/${new Date(monday.getTime() + 6*24*60*60*1000).getDate()}`;
+            
+            const container = document.getElementById('grid-container');
+            container.innerHTML = '';
+            
+            gridOrder.forEach((id) => {
+                const dayIdx = dayKeys.indexOf(id);
+                const curDate = new Date(monday); curDate.setDate(monday.getDate() + (dayIdx === 0 ? 6 : dayIdx - 1));
+                const isToday = curDate.toDateString() === todayStr;
+                const shiftKey = `${weekKey}_${id}`;
+                const card = document.createElement('div');
+                card.className = `day-card ${id === 'Sun' ? 'full-width' : ''}`;
+                
+                let headerHtml = `<div class="day-header flex justify-between items-center no-select"><div class="flex items-center gap-1.5 cursor-pointer" onclick="openDayDetail(new Date('${curDate.toISOString()}'))"><span class="text-[14px] font-bold ${id === 'Sun' ? 'text-rose-500' : 'text-slate-600'} uppercase">${dayLabels[dayIdx]}</span><span class="text-[14px] font-bold ${isToday ? 'date-highlight' : 'text-slate-400'}">${curDate.getMonth()+1}/${curDate.getDate()}</span></div><div class="shift-badge shift-${window.shifts[shiftKey]||'未定'}" onclick="openShiftPicker('${id}', '${weekKey}')">${window.shifts[shiftKey]||'未定'}</div></div>`;
+                let catHtml = categories.map(cat => {
+                    const sortedTasks = window.tasks.filter(t => t.weekKey === weekKey && t.day === id && t.category === cat).sort((a,b)=>a.order-b.order);
+                    const tasksHtml = sortedTasks.map(t => `<div class="task-item" onclick="openTaskAction(${t.id})"><div onclick="event.stopPropagation(); toggleTask(${t.id})" class="w-4 h-4 border border-slate-300 mt-0.5 flex-shrink-0 ${t.completed ? 'bg-indigo-600 border-indigo-600' : 'bg-white'}">${t.completed?checkIcon:''}</div><span class="task-text ${t.completed?'completed':'font-bold'}">${escapeHtml(t.text)}</span></div>`).join('');
+                    return `<div class="category-block cat-${cat}"><div class="category-label no-select">${cat}</div><div class="flex-1 min-h-[30px]">${tasksHtml}</div><div class="p-1 border-t border-black/5 flex gap-px quick-input-area"><input type="text" id="input-${id}-${cat}" placeholder="+ ${cat}" class="flex-1 text-[11px] px-2 py-2 bg-white/50 border-none outline-none"><button onclick="executeQuickAdd('${id}', '${weekKey}', '${cat}')" class="bg-black/5 text-slate-600 px-3 py-2 text-xs font-bold active:bg-black/10">+</button></div></div>`;
+                }).join('');
+                card.innerHTML = headerHtml + catHtml; container.appendChild(card);
+            });
+        }
+
+        function renderMonth() {
+            const year = viewDate.getFullYear();
+            const month = viewDate.getMonth();
+            document.getElementById('period-display').innerText = `${year}年 ${month + 1}月`;
+            
+            const firstDay = new Date(year, month, 1);
+            const startOffset = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1; 
+            const container = document.getElementById('grid-container');
+            container.innerHTML = '';
+
+            for (let i = 0; i < 42; i++) {
+                const cur = new Date(year, month, 1 - startOffset + i);
+                if (i >= 35 && cur.getMonth() !== month) break; // 動態列數
+
+                const isCurrentMonth = cur.getMonth() === month;
+                const weekKey = getWeekKey(cur);
+                const dayId = dayKeys[cur.getDay()];
+                const isToday = cur.toDateString() === new Date().toDateString();
+
+                const cell = document.createElement('div');
+                cell.className = `month-cell ${!isCurrentMonth ? 'other-month' : ''}`;
+                cell.onclick = () => openDayDetail(new Date(cur));
+
+                let dayTasks = window.tasks.filter(t => t.weekKey === weekKey && t.day === dayId);
+                
+                let triHtml = categories.map(cat => {
+                    const list = dayTasks.filter(t => t.category === cat);
+                    const listHtml = list.map(t => `<span class="month-task-line ${t.completed ? 'opacity-50' : ''}">${escapeHtml(t.text)}</span>`).join('');
+                    return `<div class="month-cat-section cat-${cat}">${listHtml}</div>`;
+                }).join('');
+
+                cell.innerHTML = `<div class="month-date-label ${isToday ? 'date-highlight' : ''}">${cur.getDate()}</div>${triHtml}`;
+                container.appendChild(cell);
+            }
+        }
+
+        // --- 功能模組 ---
+        function exportToCSV() {
+            if (window.tasks.length === 0) return showToast("無資料");
+            let csv = "\ufeff週一日期,星期,班別,分類,內容,是否完成,排序\n";
+            window.tasks.forEach(t => {
+                const sh = window.shifts[`${t.weekKey}_${t.day}`] || '未定';
+                csv += `"${t.weekKey}","${t.day}","${sh}","${t.category}","${t.text.replace(/"/g, '""')}","${t.completed?'已完成':'未完成'}","${t.order}"\n`;
+            });
+            document.getElementById('csv-paste-area').value = csv;
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `Planner_Export.csv`; link.click();
+            showToast("已導出並填入下方編輯框");
+        }
+
+        function importCSVFromText() {
+            const text = document.getElementById('csv-paste-area').value.trim();
+            if(!text) return showToast("內容為空");
+            try {
+                const lines = text.split(/\r?\n/);
+                const headers = lines[0].split(",");
+                const json = lines.slice(1).map(l => {
+                    const c = l.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g); if(!c) return null;
+                    let o = {}; c.forEach((v, i) => o[headers[i]?headers[i].trim().replace(/"/g,''):i] = v.trim().replace(/"/g,''));
+                    return o;
+                }).filter(o => o);
+                processJSON(json);
+            } catch(e) { showToast("解析失敗"); }
+        }
+
+        function processJSON(json) {
+            const nT = []; const nS = {...window.shifts};
+            json.forEach((r, i) => {
+                const get = (keys) => { for(let k of keys) if(r[k]!==undefined) return String(r[k]).trim(); return ""; };
+                const wk = get(["週一日期", "WeekKey"]); const dy = get(["星期", "Day"]); const sh = get(["班別", "Shift"]);
+                if(wk && dy && sh) nS[`${wk}_${dy}`] = sh;
+                if(r.內容) nT.push({ id: Date.now()+i, weekKey: wk, day: dy, category: get(["分類", "Category"])||"個人", text: String(r.內容), completed: String(r.是否完成).includes("已完成"), order: parseFloat(r.排序)||Date.now() });
+            });
+            if(confirm(`解析成功，要覆蓋現有資料嗎？`)) { window.tasks = nT; window.shifts = nS; save(); closeModals(); showToast("數據已更新"); }
+        }
+
+        // --- 其它通用工具 ---
+        function executeQuickAdd(day, weekKey, category) { const input = document.getElementById(`input-${day}-${category}`); const val = input.value.trim(); if(!val) return; window.tasks.push({ id: Date.now(), text: val, completed: false, day, weekKey, category, order: Date.now() }); input.value = ''; save(); }
+        function openDayDetail(date) { detailDate = date; renderDayDetail(); document.getElementById('modal-day').style.display = 'flex'; }
+        function renderDayDetail() {
+            const wk = getWeekKey(detailDate); const dy = dayKeys[detailDate.getDay()];
+            document.getElementById('detail-date').innerText = detailDate.toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', year: 'numeric' });
+            document.getElementById('detail-weekday').innerText = dayLabels[detailDate.getDay()];
+            document.getElementById('detail-tri-container').innerHTML = categories.map(cat => {
+                const html = window.tasks.filter(t => t.weekKey === wk && t.day === dy && t.category === cat).sort((a,b)=>a.order-b.order).map(t => `<div class="task-item" onclick="openTaskAction(${t.id})"><div onclick="event.stopPropagation(); toggleTask(${t.id})" class="w-4 h-4 border border-slate-300 mt-0.5 flex-shrink-0 ${t.completed ? 'bg-indigo-600 border-indigo-600' : 'bg-white'}">${t.completed?checkIcon:''}</div><span class="task-text ${t.completed?'completed':'font-bold'}">${escapeHtml(t.text)}</span></div>`).join('');
+                return `<div class="category-block cat-${cat} border-b"><div class="category-label">${cat}</div><div class="flex-1">${html || '<div class="py-4 text-center text-[10px] text-slate-400 uppercase">Empty</div>'}</div><div class="p-2 border-t border-black/5 flex gap-1"><input type="text" id="detail-input-${dy}-${cat}" placeholder="+ ${cat}" class="flex-1 text-xs px-2 py-2 bg-white/50 border-none outline-none"><button onclick="executeDetailAdd('${dy}', '${wk}', '${cat}')" class="bg-slate-800 text-white px-3 py-1 font-bold">+</button></div></div>`;
+            }).join('');
+        }
+        function executeDetailAdd(day, weekKey, category) { const input = document.getElementById(`detail-input-${day}-${category}`); const val = input.value.trim(); if(!val) return; window.tasks.push({ id: Date.now(), text: val, completed: false, day, weekKey, category, order: Date.now() }); input.value = ''; save(); }
+        function changePeriod(offset) { if (viewMode === 'week') viewDate.setDate(viewDate.getDate() + (offset * 7)); else viewDate.setMonth(viewDate.getMonth() + offset); render(); }
+        function changeDetailDay(offset) { detailDate.setDate(detailDate.getDate() + offset); renderDayDetail(); }
+        function goToday() { viewDate = new Date(); render(); }
+        function toggleTask(id) { window.tasks = window.tasks.map(t => t.id === id ? {...t, completed: !t.completed} : t); save(); }
+        function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); currentEditingTaskId = null; }
+        
+        function openTaskAction(id) {
+            currentEditingTaskId = id; const task = window.tasks.find(t => t.id === id); if (!task) return;
+            document.getElementById('action-task-input').value = task.text;
+            categories.forEach(cat => {
+                const btn = document.getElementById(`cat-btn-${cat}`);
+                btn.className = (task.category === cat) ? 'py-2 border text-[10px] font-bold bg-indigo-600 text-white' : 'py-2 border text-[10px] font-bold text-slate-600';
+            });
+            const mc = document.getElementById('move-day-container'); mc.innerHTML = '';
+            gridOrder.forEach(dayId => {
+                const btn = document.createElement('button'); btn.className = `move-day-btn ${task.day === dayId ? 'active' : ''}`; btn.innerText = dayId.slice(0,1);
+                btn.onclick = () => { task.day = dayId; save(); closeModals(); }; mc.appendChild(btn);
+            });
+            document.getElementById('modal-task-action').style.display = 'flex';
+        }
+        function changeTaskCategory(newCat) { const id = currentEditingTaskId; if (!id) return; const t = window.tasks.find(x => x.id === id); if (t) { t.category = newCat; save(); closeModals(); } }
+        function executeAction(type) {
+            const id = currentEditingTaskId; if (!id) return; const t = window.tasks.find(x => x.id === id);
+            switch(type) {
+                case 'save': const nt = document.getElementById('action-task-input').value.trim(); if(nt) t.text = nt; save(); closeModals(); break;
+                case 'duplicate': window.tasks.push({...t, id: Date.now(), order: t.order + 0.1}); save(); closeModals(); break;
+                case 'delete': if(confirm("確定刪除？")) { window.tasks = window.tasks.filter(x => x.id !== id); save(); closeModals(); } break;
+                case 'up': moveInList(id, -1); break;
+                case 'down': moveInList(id, 1); break;
+            }
+        }
+        function moveInList(id, dir) {
+            const t = window.tasks.find(x => x.id === id);
+            const list = window.tasks.filter(x => x.weekKey === t.weekKey && x.day === t.day && x.category === t.category).sort((a,b)=>a.order-b.order);
+            const idx = list.findIndex(x => x.id === id); const target = idx + dir;
+            if(target >= 0 && target < list.length) { const tmp = list[idx].order; list[idx].order = list[target].order; list[target].order = tmp; save(); }
+        }
+
+        function openShiftPicker(dayId, weekKey) {
+            const container = document.getElementById('shift-options'); container.innerHTML = '';
+            shiftTypes.forEach(type => {
+                const btn = document.createElement('button'); btn.className = `bg-white p-4 text-[10px] font-bold shift-${type}`;
+                btn.innerText = type; btn.onclick = () => { window.shifts[`${weekKey}_${dayId}`] = type; save(); closeModals(); };
+                container.appendChild(btn);
+            });
+            document.getElementById('modal-shift-picker').style.display = 'flex';
+        }
+
+        function exportToPNG() {
+            document.body.classList.add('export-mode'); showToast("PNG 產生中...");
+            setTimeout(() => {
+                html2canvas(document.getElementById('main-container'), { scale: 2, backgroundColor: '#f1f5f9' }).then(canvas => {
+                    const link = document.createElement('a'); link.download = `Planner_${Date.now()}.png`; link.href = canvas.toDataURL(); link.click();
+                    document.body.classList.remove('export-mode'); showToast("已導出");
+                });
+            }, 300);
+        }
+
+        function openCSVImportModal() { document.getElementById('modal-csv-import').style.display = 'flex'; }
+        function triggerFileImport(t) { const i = document.getElementById('file-upload'); i.value = ''; i.setAttribute('accept', t === 'csv' ? '.csv' : '.xlsx, .xls'); i.click(); }
+        function handleFileImport(event) {
+            const file = event.target.files[0]; if(!file) return;
+            const reader = new FileReader(); reader.onload = (e) => {
+                if(file.name.endsWith('.csv')) {
+                    document.getElementById('csv-paste-area').value = e.target.result;
+                    showToast("檔案內容已填入編輯框");
+                } else {
+                    const workbook = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+                    processJSON(XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]));
+                }
+            };
+            if(file.name.endsWith('.csv')) reader.readAsText(file); else reader.readAsArrayBuffer(file);
+        }
+
+        function clearWeek() { 
+            const wk = (viewMode === 'week') ? getWeekKey(viewDate) : "本月";
+            if(confirm(`清空 ${wk} 當前視圖所有事項與班表？`)) { 
+                if(viewMode === 'week') {
+                    const key = getWeekKey(viewDate);
+                    window.tasks = window.tasks.filter(t => t.weekKey !== key);
+                    gridOrder.forEach(d => delete window.shifts[`${key}_${d}`]);
+                } else {
+                    const month = viewDate.getMonth();
+                    window.tasks = window.tasks.filter(t => new Date(t.weekKey).getMonth() !== month);
+                }
+                save(); 
+            } 
+        }
+
+        function getMonday(d) { d = new Date(d); const day = d.getDay(); return new Date(d.setDate(d.getDate() - day + (day === 0 ? -6 : 1))); }
+        function getWeekKey(date) { return getMonday(date).toISOString().split('T')[0]; }
+        function escapeHtml(t) { const d = document.createElement('div'); d.innerText = t; return d.innerHTML; }
+        function showToast(msg) { const t = document.getElementById('toast'); t.innerText = msg; t.style.display = 'block'; setTimeout(() => { if(t) t.style.display = 'none'; }, 3000); }
+        function openCalendar() { calDate = new Date(viewDate); renderCalendar(); document.getElementById('modal-calendar').style.display = 'flex'; }
+        function renderCalendar() {
+            const y = calDate.getFullYear(); const m = calDate.getMonth();
+            document.getElementById('cal-header').innerHTML = `<button onclick="moveCalMonth(-1)">◄</button><span>${y} / ${m+1}</span><button onclick="moveCalMonth(1)">►</button>`;
+            const grid = document.getElementById('cal-days'); grid.innerHTML = '';
+            const first = new Date(y, m, 1).getDay();
+            const daysInMonth = new Date(y, m + 1, 0).getDate();
+            const offset = first === 0 ? 6 : first - 1; 
+            for(let i=0; i<offset; i++) grid.appendChild(document.createElement('div'));
+            for(let i=1; i<=daysInMonth; i++) {
+                const cell = document.createElement('div');
+                cell.className = `h-10 flex items-center justify-center cursor-pointer ${new Date(y,m,i).toDateString() === viewDate.toDateString() ? 'bg-indigo-600 text-white' : 'bg-white'}`;
+                cell.innerText = i; cell.onclick = () => { viewDate = new Date(y, m, i); closeModals(); render(); };
+                grid.appendChild(cell);
+            }
+        }
+        function moveCalMonth(offset) { calDate.setMonth(calDate.getMonth() + offset); renderCalendar(); }
+    </script>
+</body>
+</html>
+
